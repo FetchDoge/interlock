@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Leased authority, e-stop, fault bus, and provenance for AI agent systems"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 authors = [{ name = "Marcus Richards" }]
 keywords = ["agents", "safety", "leases", "provenance", "orchestration"]
 classifiers = [
