@@ -2,7 +2,7 @@
 
 **Interlock replaces ambient agent authority with leases that expire on their own clock. A global e-stop and a fault bus gate every action, and the gate fails closed.**
 
-[![CI](https://github.com/FetchDoge/interlock/actions/workflows/ci.yml/badge.svg)](https://github.com/FetchDoge/interlock/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-blue.svg)](pyproject.toml) [![Release](https://img.shields.io/github/v/release/FetchDoge/interlock)](https://github.com/FetchDoge/interlock/releases)
+[![CI](https://github.com/FetchDoge/interlock/actions/workflows/ci.yml/badge.svg)](https://github.com/FetchDoge/interlock/actions/workflows/ci.yml) [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE) [![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-blue.svg)](pyproject.toml) [![Release](https://img.shields.io/github/v/release/FetchDoge/interlock)](https://github.com/FetchDoge/interlock/releases)
 
 Agents act with ambient, unexpiring authority. Filesystem, credentials, and network access get granted once for the whole session and revoked only by killing the process. The 2026 agent stack has an authority problem, not a capability problem.
 
@@ -100,4 +100,5 @@ Built by Marcus Richards, directing AI coding agents.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Copyright 2026 Marcus Richards.
+Licensed under the Apache License 2.0. See LICENSE.

@@ -23,7 +23,7 @@ transfers. Fluency is not proof; this ledger is the difference.
 - **Spot SDK repository management** — local clone analyzed, 2026-09-26.
   Source of: `scripts/release.sh` discipline (single VERSION source,
   release commits, tags, changelog). Proprietary license verified; NOT
-  copied — Interlock is MIT.
+  copied — Interlock is Apache-2.0.
 
 ## Skimmed
 
