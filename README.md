@@ -81,7 +81,7 @@ The fastest path to a first lease is [`docs/guides/quickstart.md`](docs/guides/q
 
 ## Evidence
 
-- **68 tests pass:** `pytest -q`, run 2026-10-07 on `main` at `6bc4b02`. CI runs the same suite on Python 3.11, 3.12, and 3.13, plus `ruff` lint and format checks and a version-consistency check.
+- **68 tests pass:** `pytest -q`, re-run 2026-10-15 on `main` at `68f2d6e`. CI runs the same suite on Python 3.11, 3.12, and 3.13, plus `ruff` lint and format checks and a version-consistency check.
 - The quickstart above was executed on 2026-10-07: the gate refused a permit with `FaultActive` after a `major` fault.
 - [`INTAKE_LEDGER.md`](INTAKE_LEDGER.md) lists every source behind the transfer, with reading depth and an explicit unverified list.
 
