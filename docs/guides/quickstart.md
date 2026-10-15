@@ -12,7 +12,7 @@ virtual environment with a supported interpreter, and install the checked-out
 package:
 
 ```bash
-git clone https://github.com/marsojuji-cmyk/interlock.git
+git clone https://github.com/FetchDoge/interlock.git
 cd interlock
 python3 -m venv .venv   # python3 must be 3.11+; use python3.11 etc. if needed
 . .venv/bin/activate
