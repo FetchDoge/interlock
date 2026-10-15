@@ -96,6 +96,8 @@ The fastest path to a first lease is [`docs/guides/quickstart.md`](docs/guides/q
 
 v0.1.0 ([release](https://github.com/FetchDoge/interlock/releases/tag/v0.1.0), 2026-09-27): core substrate with tests. See [`CHANGELOG.md`](CHANGELOG.md).
 
+Built by Marcus Richards, directing AI coding agents.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
