@@ -2,7 +2,7 @@
 
 **Interlock replaces ambient agent authority with leases that expire on their own clock. A global e-stop and a fault bus gate every action, and the gate fails closed.**
 
-[![CI](https://github.com/marsojuji-cmyk/interlock/actions/workflows/ci.yml/badge.svg)](https://github.com/marsojuji-cmyk/interlock/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-blue.svg)](pyproject.toml) [![Release](https://img.shields.io/github/v/release/marsojuji-cmyk/interlock)](https://github.com/marsojuji-cmyk/interlock/releases)
+[![CI](https://github.com/FetchDoge/interlock/actions/workflows/ci.yml/badge.svg)](https://github.com/FetchDoge/interlock/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-blue.svg)](pyproject.toml) [![Release](https://img.shields.io/github/v/release/FetchDoge/interlock)](https://github.com/FetchDoge/interlock/releases)
 
 Agents act with ambient, unexpiring authority. Filesystem, credentials, and network access get granted once for the whole session and revoked only by killing the process. The 2026 agent stack has an authority problem, not a capability problem.
 
@@ -29,7 +29,7 @@ Inside the substrate, **no action executes without a live lease, a clear e-stop,
 Interlock is not published on PyPI, so `pip install interlock` does not install this package. Install it from a clone:
 
 ```bash
-git clone https://github.com/marsojuji-cmyk/interlock.git && cd interlock
+git clone https://github.com/FetchDoge/interlock.git && cd interlock
 pip install -e ".[test]" && pytest -q
 ```
 
@@ -94,7 +94,7 @@ The fastest path to a first lease is [`docs/guides/quickstart.md`](docs/guides/q
 
 ## Status
 
-v0.1.0 ([release](https://github.com/marsojuji-cmyk/interlock/releases/tag/v0.1.0), 2026-09-27): core substrate with tests. See [`CHANGELOG.md`](CHANGELOG.md).
+v0.1.0 ([release](https://github.com/FetchDoge/interlock/releases/tag/v0.1.0), 2026-09-27): core substrate with tests. See [`CHANGELOG.md`](CHANGELOG.md).
 
 ## License
 
