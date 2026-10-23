@@ -11,8 +11,10 @@ Every permit passes the gate in order: e-stop clear, lease issued by this
 facade and live, no gating fault on the lease's resource.
 """
 
+import inspect
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from typing import TypeVar
 
 from interlock._errors import (
     EStopEngaged,
@@ -23,11 +25,13 @@ from interlock._errors import (
     LeaseRevoked,
 )
 from interlock.claims import Claim
-from interlock.estop import EStop
+from interlock.estop import EStop, InFlightGate
 from interlock.faults import FaultBus
 from interlock.interfaces import REGISTRY, InterfaceRecord, declare
 from interlock.leases import Lease, LeaseManager
 from interlock.ledger import Ledger
+
+T = TypeVar("T")
 
 __version__ = "0.1.0"
 
@@ -60,9 +64,10 @@ class Interlock:
         clock: Callable[[], float] | None = None,
         ledger: Ledger | None = None,
     ) -> None:
-        self.leases = LeaseManager(clock)
-        self.estop = EStop()
-        self.faults = FaultBus()
+        self._gate = InFlightGate()
+        self.leases = LeaseManager(clock, gate=self._gate)
+        self.estop = EStop(self._gate)
+        self.faults = FaultBus(gate=self._gate)
         self.ledger = ledger if ledger is not None else Ledger()
 
     def grant(
@@ -92,24 +97,15 @@ class Interlock:
         )
         return lease
 
-    @contextmanager
-    def permit(self, lease: Lease, action: str, target: str) -> Iterator[Lease]:
-        """Permit exactly one action on one target, checking in order:
-
-        1. e-stop clear → else :exc:`EStopEngaged`
-        2. lease issued by this facade's manager and unaltered → else
-           :exc:`LeaseNotIssued`; then live (unrevoked, unexpired) → else
-           :exc:`LeaseRevoked` or :exc:`LeaseExpired`
-        3. no gating fault on the lease's resource → else :exc:`FaultActive`
-
-        Permits and denials are appended to the ledger.
-        """
+    def _check(self, lease: Lease, action: str, target: str, phase: str) -> dict:
+        """Run the gate in order; log and raise on the first failure."""
         base = {
             "lease_id": lease.id,
             "holder": lease.holder,
             "resource": lease.resource,
             "action": action,
             "target": target,
+            "phase": phase,
         }
         try:
             self.estop.assert_clear()
@@ -130,8 +126,93 @@ class Interlock:
         if self.faults.gating(lease.resource):
             self.ledger.append("denials", {**base, "reason": "fault"})
             raise FaultActive(f"gating fault active on {lease.resource}")
+        return base
+
+    @contextmanager
+    def permit(self, lease: Lease, action: str, target: str) -> Iterator[Lease]:
+        """Permit exactly one action on one target, checking in order:
+
+        1. e-stop clear → else :exc:`EStopEngaged`
+        2. lease issued by this facade's manager and unaltered → else
+           :exc:`LeaseNotIssued`; then live (unrevoked, unexpired) → else
+           :exc:`LeaseRevoked` or :exc:`LeaseExpired`
+        3. no gating fault on the lease's resource → else :exc:`FaultActive`
+
+        Permits and denials are appended to the ledger.
+
+        ``permit()`` checks at block entry only: it cannot stop an effect the
+        caller performs later inside the block. For irreversible effects use
+        :meth:`execute`, which re-proves the gate at the commit point. If the
+        e-stop engages or the lease is revoked while the block runs, a
+        ``violations`` record is appended on exit so the gap is never silent.
+        An engagement counts even if the e-stop was released again before
+        the block exited — the exit check compares engagement counts, not
+        the final state.
+        """
+        base = self._check(lease, action, target, phase="entry")
         self.ledger.append("permits", base)
-        yield lease
+        engagements = self.estop.engagements
+        try:
+            yield lease
+        finally:
+            reason = None
+            if self.estop.engagements != engagements:
+                reason = "estop"
+            elif self.leases.is_revoked(lease):
+                reason = "lease_revoked"
+            if reason:
+                self.ledger.append("violations", {**base, "reason": reason})
+
+    def execute(self, lease: Lease, action: str, target: str, effect: Callable[[], T]) -> T:
+        """Run ``effect`` only if the gate is clear at the commit point.
+
+        Fail-closed: the gate (e-stop, lease issued/live/unrevoked, faults) is
+        checked and the effect registered as in flight atomically, under the
+        same lock :meth:`EStop.engage` and :meth:`LeaseManager.revoke` take.
+        Either the halt lands first and the effect never starts, or the effect
+        started first and the halt call waits for it to finish. Any error in
+        the check refuses the effect.
+
+        ``effect`` must run to completion synchronously. A coroutine,
+        generator, or async generator is deferred work: calling it starts
+        nothing, so the gate cannot hold it in flight. Deferred callables
+        are refused with :exc:`TypeError` before the gate runs, and a
+        deferred result returned by a plain callable is closed unstarted
+        and refused the same way — never left to run after a halt returns.
+        """
+        if (
+            inspect.iscoroutinefunction(effect)
+            or inspect.isgeneratorfunction(effect)
+            or inspect.isasyncgenfunction(effect)
+        ):
+            raise TypeError(
+                "execute() effect must be a plain synchronous callable; "
+                "async and generator effects are refused"
+            )
+        registered = False
+        try:
+            with self._gate.cond:
+                base = self._check(lease, action, target, phase="commit")
+                self._gate.enter(lease.id)
+                registered = True
+            self.ledger.append("permits", base)
+            result = effect()
+            if (
+                inspect.iscoroutine(result)
+                or inspect.isgenerator(result)
+                or inspect.isasyncgen(result)
+            ):
+                close = getattr(result, "close", None)
+                if close is not None:
+                    close()
+                raise TypeError(
+                    "execute() effect returned deferred work (coroutine or generator); "
+                    "it was closed unstarted and refused"
+                )
+            return result
+        finally:
+            if registered:
+                self._gate.leave(lease.id)
 
     def claim(
         self,
