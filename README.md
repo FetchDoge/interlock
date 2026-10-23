@@ -10,7 +10,7 @@ Mobile robots solved this a decade ago. Boston Dynamics' Spot admits intent thro
 
 ## What it guarantees
 
-Inside the substrate, **no action executes without a live lease, a clear e-stop, and no gating fault.** `Interlock.permit()` checks in this order and raises on the first failure:
+Inside the substrate, **no action executes without a live lease, a clear e-stop, and no gating fault.** The gate — `Interlock.execute()` at the commit point, `Interlock.permit()` at block entry — checks in this order and raises on the first failure:
 
 1. e-stop clear, else `EStopEngaged`
 2. lease issued by this `Interlock` and unaltered, else `LeaseNotIssued`; then unrevoked and unexpired, else `LeaseRevoked` or `LeaseExpired`
@@ -41,9 +41,10 @@ ilk = Interlock()
 # GRANT: authority comes into existence only here, and it expires.
 lease = ilk.grant(resource="docs:write", holder="research-agent", ttl=1800)
 
-# EXERCISE: every action passes the gate.
-with ilk.permit(lease, action="write", target="brief.md"):
-    ...  # raises EStopEngaged, LeaseNotIssued, LeaseRevoked, LeaseExpired, or FaultActive otherwise
+# EXERCISE: every action passes the gate. execute() re-proves the gate at
+# the commit point, atomically with starting the effect — a halt that lands
+# while the action is being prepared refuses it instead of racing it.
+ilk.execute(lease, "write", "brief.md", effect)  # raises EStopEngaged, LeaseNotIssued, LeaseRevoked, LeaseExpired, or FaultActive otherwise
 
 # A major or critical fault refuses further permits on the affected resource.
 ilk.faults.report(code="TOOL_TIMEOUT", severity="major", resource="web:read")
@@ -66,14 +67,14 @@ The fastest path to a first lease is [`docs/guides/quickstart.md`](docs/guides/q
 
 | Condition | Behavior |
 |---|---|
-| E-stop engaged | Every `permit()` raises `EStopEngaged` and logs a `denials` record |
+| E-stop engaged | Every gate check raises `EStopEngaged` and logs a `denials` record |
 | Lease expired (no keepalive in time) | `LeaseExpired`. A late keepalive also raises |
 | Lease not issued by this `Interlock` (hand-built, from another instance, or edited after issue) | `LeaseNotIssued` and a `denials` record with reason `lease_not_issued` |
 | Lease revoked | `LeaseRevoked`, permanently. Resetting `lease.revoked` on the object does not restore it |
 | `major`/`critical` fault on the resource | `FaultActive` until the fault is cleared. `minor` faults are recorded but do not gate |
 
 **Known limits:**
-- The gate runs at `permit()` entry. An e-stop engaged *during* a `with` block does not interrupt code already running inside it; it refuses the next permit.
+- `permit()` checks at block entry only. An e-stop engaged *during* a `with` block does not interrupt code already running inside it; the block's exit logs a `violations` record and the next permit is refused. For an effect that must not start once authority is gone, use `execute()`: it re-proves the gate at the commit point, and an e-stop or revocation returns only after already-committed effects have finished.
 - State is in-process and in-memory. Interlock gates actions routed through it and cannot stop an agent that bypasses the substrate. It is one layer of defense in depth.
 - The ledger is append-only and self-describing JSONL (format descriptor, per-series schemas, closing index). Reopening a path appends a new segment and never truncates unless you pass `mode="w"`. Every record is flushed as it is written, so it survives a crash of the writing process. Only `close()` fsyncs, so a power loss can still drop the last records. It is **not** hash-chained or signed, so treat it as an audit log, not tamper evidence.
 
