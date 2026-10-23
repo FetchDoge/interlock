@@ -49,9 +49,10 @@ class _Issued:
 class LeaseManager:
     """Issues, renews, revokes, and checks leases against an injectable clock."""
 
-    def __init__(self, clock: Callable[[], float] | None = None) -> None:
+    def __init__(self, clock: Callable[[], float] | None = None, gate=None) -> None:
         self._clock = clock if clock is not None else time.monotonic
         self._issued: dict[str, _Issued] = {}
+        self._gate = gate
 
     def now(self) -> float:
         """Current time according to the manager's clock."""
@@ -125,8 +126,19 @@ class LeaseManager:
         """Revoke a lease immediately. Revocation is permanent.
 
         The manager records the revocation, so resetting ``lease.revoked`` on
-        the object does not restore authority.
+        the object does not restore authority. With an in-flight gate (as
+        wired by ``Interlock``), the revocation is ordered against commit-time
+        checks and the call returns only after this lease's committed effects
+        have finished.
         """
+        if self._gate is None:
+            self._mark_revoked(lease)
+            return
+        with self._gate.cond:
+            self._mark_revoked(lease)
+        self._gate.drain(lease.id)
+
+    def _mark_revoked(self, lease: Lease) -> None:
         lease.revoked = True
         rec = self._record(lease)
         if rec is not None:
