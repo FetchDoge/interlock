@@ -18,6 +18,7 @@ process crashing. ``close()`` also fsyncs a file the ledger opened itself.
 import io
 import json
 import os
+import threading
 from datetime import UTC, datetime
 from typing import Any, TextIO
 
@@ -27,7 +28,13 @@ MODES = ("a", "w")
 
 
 class Ledger:
-    """Append-only JSONL log with format descriptor, series descriptors, and a closing index."""
+    """Append-only JSONL log with format descriptor, series descriptors, and a closing index.
+
+    Appends and close are serialised with an internal lock, so one ledger
+    may be shared across threads: concurrent first appends to a series
+    write exactly one series descriptor, and the closing index counts
+    every record actually written.
+    """
 
     def __init__(self, dest: str | TextIO | None = None, mode: str = "a") -> None:
         """Open a ledger.
@@ -49,6 +56,7 @@ class Ledger:
             self._buf = dest
         self._series: dict[str, dict[str, Any]] = {}
         self._closed = False
+        self._lock = threading.Lock()
         self._write({"_type": "format", "format": FORMAT, "version": VERSION})
 
     def _write(self, obj: dict[str, Any]) -> None:
@@ -76,33 +84,35 @@ class Ledger:
         The first append to a new series writes a series descriptor declaring
         the schema (the record's sorted keys). Returns the stamped record.
         """
-        if self._closed:
-            raise ValueError("ledger is closed")
-        if series not in self._series:
-            self._write({"_type": "series", "series": series, "schema": sorted(record.keys())})
-            self._series[series] = {"count": 0, "first_ts": None, "last_ts": None}
-        entry = dict(record)
-        entry["_type"] = "record"
-        entry["_series"] = series
-        entry["_ts"] = datetime.now(UTC).isoformat()
-        info = self._series[series]
-        info["count"] += 1
-        info["last_ts"] = entry["_ts"]
-        if info["first_ts"] is None:
-            info["first_ts"] = entry["_ts"]
-        self._write(entry)
-        return entry
+        with self._lock:
+            if self._closed:
+                raise ValueError("ledger is closed")
+            if series not in self._series:
+                self._write({"_type": "series", "series": series, "schema": sorted(record.keys())})
+                self._series[series] = {"count": 0, "first_ts": None, "last_ts": None}
+            entry = dict(record)
+            entry["_type"] = "record"
+            entry["_series"] = series
+            entry["_ts"] = datetime.now(UTC).isoformat()
+            info = self._series[series]
+            info["count"] += 1
+            info["last_ts"] = entry["_ts"]
+            if info["first_ts"] is None:
+                info["first_ts"] = entry["_ts"]
+            self._write(entry)
+            return entry
 
     def close(self) -> None:
         """Append the closing index. Idempotent: closing twice writes one index."""
-        if self._closed:
-            return
-        self._closed = True
-        index = {name: dict(info) for name, info in self._series.items()}
-        self._write({"_type": "index", "series": index})
-        if self._owns_handle:
-            os.fsync(self._buf.fileno())  # one fsync per run: the closed file is on disk
-            self._buf.close()
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            index = {name: dict(info) for name, info in self._series.items()}
+            self._write({"_type": "index", "series": index})
+            if self._owns_handle:
+                os.fsync(self._buf.fileno())  # one fsync per run: the closed file is on disk
+                self._buf.close()
 
     def read_series(self, series: str):
         """Yield the record dicts of one series, in append order.

@@ -15,6 +15,7 @@ class EStop:
     def __init__(self, gate: "InFlightGate | None" = None) -> None:
         self._engaged = False
         self._reason = ""
+        self._engagements = 0
         self._gate = gate if gate is not None else InFlightGate()
 
     def engage(self, reason: str) -> None:
@@ -24,10 +25,13 @@ class EStop:
         interleave with it, and the call returns only once every effect that
         was already committed (via ``Interlock.execute``) has finished. When
         ``engage`` returns, nothing is mid-effect and nothing new can start.
+        Every engagement is counted (see :attr:`engagements`), including one
+        that is released again before anyone looks.
         """
         with self._gate.cond:
             self._engaged = True
             self._reason = reason
+            self._engagements += 1
         self._gate.drain()
 
     def release(self) -> None:
@@ -39,6 +43,15 @@ class EStop:
     def is_engaged(self) -> bool:
         """Whether the e-stop is currently engaged."""
         return self._engaged
+
+    @property
+    def engagements(self) -> int:
+        """How many times the e-stop has ever been engaged.
+
+        Lets a caller detect an engagement that was released again before
+        it looked — a final-state check on :attr:`is_engaged` cannot.
+        """
+        return self._engagements
 
     @property
     def reason(self) -> str:
@@ -58,12 +71,16 @@ class InFlightGate:
     in flight under ``cond``; ``EStop.engage`` and ``LeaseManager.revoke``
     change state under ``cond`` and then wait for in-flight effects to drain.
     Effects run concurrently; only check-and-register is serialised. A halt
-    raised from inside an effect does not wait on its own thread's effect.
+    raised from inside an effect does not wait on its own thread's effect,
+    and concurrent halts raised from inside effects do not wait on each
+    other either: a draining thread's effect is suspended inside its halt
+    call, so two such halts waiting on each other could never return.
     """
 
     def __init__(self) -> None:
         self.cond = threading.Condition()
         self._in_flight: dict[tuple[str, int], int] = {}
+        self._halting: dict[int, int] = {}
 
     def enter(self, lease_id: str) -> None:
         """Register one effect for ``lease_id``. Call with ``cond`` held."""
@@ -83,10 +100,27 @@ class InFlightGate:
     def _busy(self, lease_id: str | None) -> bool:
         me = threading.get_ident()
         return any(
-            tid != me and (lease_id is None or lid == lease_id) for lid, tid in self._in_flight
+            tid != me and tid not in self._halting and (lease_id is None or lid == lease_id)
+            for lid, tid in self._in_flight
         )
 
     def drain(self, lease_id: str | None = None) -> None:
-        """Block until no other thread has an effect (for ``lease_id``) in flight."""
+        """Block until no other thread has an effect (for ``lease_id``) in flight.
+
+        Effects on threads that are themselves inside a halt do not block
+        the drain (see the class docstring); effects still running normally
+        are waited on, and a halted thread's effect is waited on again as
+        soon as its halt returns and the effect resumes.
+        """
+        me = threading.get_ident()
         with self.cond:
-            self.cond.wait_for(lambda: not self._busy(lease_id))
+            self._halting[me] = self._halting.get(me, 0) + 1
+            try:
+                self.cond.wait_for(lambda: not self._busy(lease_id))
+            finally:
+                n = self._halting[me] - 1
+                if n <= 0:
+                    del self._halting[me]
+                else:
+                    self._halting[me] = n
+                self.cond.notify_all()

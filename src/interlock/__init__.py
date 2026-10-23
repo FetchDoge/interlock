@@ -11,6 +11,7 @@ Every permit passes the gate in order: e-stop clear, lease issued by this
 facade and live, no gating fault on the lease's resource.
 """
 
+import inspect
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import TypeVar
@@ -66,7 +67,7 @@ class Interlock:
         self._gate = InFlightGate()
         self.leases = LeaseManager(clock, gate=self._gate)
         self.estop = EStop(self._gate)
-        self.faults = FaultBus()
+        self.faults = FaultBus(gate=self._gate)
         self.ledger = ledger if ledger is not None else Ledger()
 
     def grant(
@@ -144,14 +145,18 @@ class Interlock:
         :meth:`execute`, which re-proves the gate at the commit point. If the
         e-stop engages or the lease is revoked while the block runs, a
         ``violations`` record is appended on exit so the gap is never silent.
+        An engagement counts even if the e-stop was released again before
+        the block exited — the exit check compares engagement counts, not
+        the final state.
         """
         base = self._check(lease, action, target, phase="entry")
         self.ledger.append("permits", base)
+        engagements = self.estop.engagements
         try:
             yield lease
         finally:
             reason = None
-            if self.estop.is_engaged:
+            if self.estop.engagements != engagements:
                 reason = "estop"
             elif self.leases.is_revoked(lease):
                 reason = "lease_revoked"
@@ -167,15 +172,47 @@ class Interlock:
         Either the halt lands first and the effect never starts, or the effect
         started first and the halt call waits for it to finish. Any error in
         the check refuses the effect.
+
+        ``effect`` must run to completion synchronously. A coroutine,
+        generator, or async generator is deferred work: calling it starts
+        nothing, so the gate cannot hold it in flight. Deferred callables
+        are refused with :exc:`TypeError` before the gate runs, and a
+        deferred result returned by a plain callable is closed unstarted
+        and refused the same way — never left to run after a halt returns.
         """
-        with self._gate.cond:
-            base = self._check(lease, action, target, phase="commit")
-            self._gate.enter(lease.id)
+        if (
+            inspect.iscoroutinefunction(effect)
+            or inspect.isgeneratorfunction(effect)
+            or inspect.isasyncgenfunction(effect)
+        ):
+            raise TypeError(
+                "execute() effect must be a plain synchronous callable; "
+                "async and generator effects are refused"
+            )
+        registered = False
         try:
+            with self._gate.cond:
+                base = self._check(lease, action, target, phase="commit")
+                self._gate.enter(lease.id)
+                registered = True
             self.ledger.append("permits", base)
-            return effect()
+            result = effect()
+            if (
+                inspect.iscoroutine(result)
+                or inspect.isgenerator(result)
+                or inspect.isasyncgen(result)
+            ):
+                close = getattr(result, "close", None)
+                if close is not None:
+                    close()
+                raise TypeError(
+                    "execute() effect returned deferred work (coroutine or generator); "
+                    "it was closed unstarted and refused"
+                )
+            return result
         finally:
-            self._gate.leave(lease.id)
+            if registered:
+                self._gate.leave(lease.id)
 
     def claim(
         self,
