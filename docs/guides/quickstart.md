@@ -49,15 +49,21 @@ checks the e-stop, lease state, and resource faults at the time of entry.
 ## 3. Exercise it through the gate
 
 ```python
-with ilk.permit(lease, action="write", target="notes.md"):
-    Path("notes.md").write_text("hello")
+ilk.execute(lease, "write", "notes.md", lambda: Path("notes.md").write_text("hello"))
 ```
 
 The gate checks, in order: e-stop clear, lease issued by this `Interlock`
-and live, and no gating fault on `docs:write`. If any check fails, the
-context manager raises instead of yielding: `EStopEngaged`,
-`LeaseNotIssued`, `LeaseExpired`/`LeaseRevoked`, or `FaultActive`. The check
-controls admission to the context. It is not an OS sandbox, and it cannot
+and live, and no gating fault on `docs:write`. If any check fails,
+`execute()` raises instead of running the effect: `EStopEngaged`,
+`LeaseNotIssued`, `LeaseExpired`/`LeaseRevoked`, or `FaultActive`.
+
+`execute()` runs the check at the commit point — atomically with starting
+the effect — so an e-stop or revocation that lands while the effect is
+being prepared still refuses it, and a halt call returns only after
+already-committed effects have finished. This is the path for any effect
+that cannot be taken back. (`permit()` also exists as a context manager,
+but it checks once at block entry only; use it solely for work that is
+safe to abandon mid-block.) The gate is not an OS sandbox, and it cannot
 interrupt an action that has already started.
 
 ## 4. Watch a fault refuse
@@ -68,8 +74,7 @@ fault = ilk.faults.report(
 )
 
 try:
-    with ilk.permit(lease, action="write", target="notes.md"):
-        Path("notes.md").write_text("should not be admitted")
+    ilk.execute(lease, "write", "notes.md", lambda: Path("notes.md").write_text("no"))
 except FaultActive:
     pass
 else:
@@ -77,8 +82,7 @@ else:
 
 assert fault.id is not None
 ilk.faults.clear(fault.id)
-with ilk.permit(lease, action="write", target="notes.md"):
-    Path("notes.md").write_text("resumed")
+ilk.execute(lease, "write", "notes.md", lambda: Path("notes.md").write_text("resumed"))
 ```
 
 The refused entry is appended to the ledger. Clearing the fault permits a
@@ -89,8 +93,8 @@ new admission; it does not retroactively authorize the refused action.
 ```python
 ilk.estop.engage("taking a look")
 try:
-    with ilk.permit(lease, action="write", target="notes.md"):
-        raise AssertionError("e-stop must refuse admission")
+    ilk.execute(lease, "write", "notes.md", lambda: None)
+    raise AssertionError("e-stop must refuse admission")
 except EStopEngaged:
     pass
 ilk.estop.release()  # deliberate, never automatic
